@@ -32,6 +32,8 @@ interface SettingsPanelProps {
   className?: string;
   pipelineId: PipelineId;
   onPipelineIdChange?: (pipelineId: PipelineId) => void;
+  parameterTransport?: "webrtc" | "http";
+  onParameterTransportChange?: (transport: "webrtc" | "http") => void;
   isStreaming?: boolean;
   isDownloading?: boolean;
   resolution?: {
@@ -58,6 +60,8 @@ export function SettingsPanel({
   className = "",
   pipelineId,
   onPipelineIdChange,
+  parameterTransport = "webrtc",
+  onParameterTransportChange,
   isStreaming = false,
   isDownloading = false,
   resolution,
@@ -94,6 +98,12 @@ export function SettingsPanel({
   const handlePipelineIdChange = (value: string) => {
     if (value in PIPELINES) {
       onPipelineIdChange?.(value as PipelineId);
+    }
+  };
+
+  const handleParameterTransportChange = (value: string) => {
+    if (value === "webrtc" || value === "http") {
+      onParameterTransportChange?.(value);
     }
   };
 
@@ -221,6 +231,23 @@ export function SettingsPanel({
                   {id}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">Parameter Updates</h3>
+          <Select
+            value={parameterTransport}
+            onValueChange={handleParameterTransportChange}
+            disabled={isDownloading}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a transport" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="webrtc">WebRTC Data Channel</SelectItem>
+              <SelectItem value="http">HTTP API</SelectItem>
             </SelectContent>
           </Select>
         </div>

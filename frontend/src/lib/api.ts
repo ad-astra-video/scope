@@ -9,18 +9,22 @@ export interface PromptTransition {
   temporal_interpolation_method?: "linear" | "slerp"; // Default: linear
 }
 
+export interface PipelineParameterUpdate {
+  prompts?: string[] | PromptItem[];
+  prompt_interpolation_method?: "linear" | "slerp";
+  transition?: PromptTransition;
+  denoising_step_list?: number[];
+  noise_scale?: number;
+  noise_controller?: boolean;
+  manage_cache?: boolean;
+  reset_cache?: boolean;
+  paused?: boolean;
+}
+
 export interface WebRTCOfferRequest {
   sdp?: string;
   type?: string;
-  initialParameters?: {
-    prompts?: string[] | PromptItem[];
-    prompt_interpolation_method?: "linear" | "slerp";
-    transition?: PromptTransition;
-    denoising_step_list?: number[];
-    noise_scale?: number;
-    noise_controller?: boolean;
-    manage_cache?: boolean;
-  };
+  initialParameters?: PipelineParameterUpdate;
 }
 
 export interface PipelineLoadParams {
@@ -154,6 +158,26 @@ export const downloadPipelineModels = async (
     const errorText = await response.text();
     throw new Error(
       `Model download failed: ${response.status} ${response.statusText}: ${errorText}`
+    );
+  }
+
+  const result = await response.json();
+  return result;
+};
+
+export const updatePipelineParameters = async (
+  data: PipelineParameterUpdate
+): Promise<{ message: string }> => {
+  const response = await fetch("/api/v1/pipeline/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Pipeline update failed: ${response.status} ${response.statusText}: ${errorText}`
     );
   }
 

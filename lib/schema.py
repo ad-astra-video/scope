@@ -88,6 +88,15 @@ class WebRTCOfferRequest(BaseModel):
     )
 
 
+class PipelineUpdateRequest(Parameters):
+    """Request payload for updating pipeline parameters over HTTP."""
+
+    paused: bool | None = Field(
+        default=None,
+        description="Pause or resume playback across active WebRTC sessions when streaming",
+    )
+
+
 class WebRTCOfferResponse(BaseModel):
     """WebRTC offer response schema."""
 

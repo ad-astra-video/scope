@@ -1,24 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   sendWebRTCOffer,
-  type PromptItem,
-  type PromptTransition,
+  type PipelineParameterUpdate,
+  updatePipelineParameters,
 } from "../lib/api";
 import { toast } from "sonner";
 
-interface InitialParameters {
-  prompts?: string[] | PromptItem[];
-  prompt_interpolation_method?: "linear" | "slerp";
-  transition?: PromptTransition;
-  denoising_step_list?: number[];
-  noise_scale?: number;
-  noise_controller?: boolean;
-  manage_cache?: boolean;
-}
+type InitialParameters = PipelineParameterUpdate;
 
 interface UseWebRTCOptions {
   /** Callback function called when the stream stops on the backend */
   onStreamStop?: () => void;
+  /** Delivery mechanism for parameter updates */
+  parameterTransport?: "webrtc" | "http";
 }
 
 /**
@@ -28,6 +22,9 @@ interface UseWebRTCOptions {
  * and updates the UI state accordingly.
  */
 export function useWebRTC(options?: UseWebRTCOptions) {
+  const onStreamStop = options?.onStreamStop;
+  const parameterTransport = options?.parameterTransport ?? "webrtc";
+
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [connectionState, setConnectionState] =
     useState<RTCPeerConnectionState>("new");
@@ -92,8 +89,8 @@ export function useWebRTC(options?: UseWebRTCOptions) {
                 peerConnectionRef.current = null;
               }
               // Notify parent component
-              if (options?.onStreamStop) {
-                options.onStreamStop();
+              if (onStreamStop) {
+                onStreamStop();
               }
             }
           } catch (error) {
@@ -187,7 +184,7 @@ export function useWebRTC(options?: UseWebRTCOptions) {
         setIsConnecting(false);
       }
     },
-    [isConnecting, options]
+    [isConnecting, onStreamStop]
   );
 
   const updateVideoTrack = useCallback(
@@ -202,7 +199,7 @@ export function useWebRTC(options?: UseWebRTCOptions) {
 
           const sender = peerConnectionRef.current
             .getSenders()
-            .find(s => s.track?.kind === "video");
+            .find((s: RTCRtpSender) => s.track?.kind === "video");
 
           if (sender) {
             console.log("Replacing video track");
@@ -225,41 +222,45 @@ export function useWebRTC(options?: UseWebRTCOptions) {
   );
 
   const sendParameterUpdate = useCallback(
-    (params: {
-      prompts?: string[] | PromptItem[];
-      prompt_interpolation_method?: "linear" | "slerp";
-      transition?: PromptTransition;
-      denoising_step_list?: number[];
-      noise_scale?: number;
-      noise_controller?: boolean;
-      manage_cache?: boolean;
-      reset_cache?: boolean;
-      paused?: boolean;
-    }) => {
+    async (params: PipelineParameterUpdate) => {
+      // Filter out undefined/null parameters
+      const filteredParams: PipelineParameterUpdate = {};
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null) {
+          (filteredParams as Record<string, unknown>)[key] = value;
+        }
+      }
+
+      if (Object.keys(filteredParams).length === 0) {
+        return;
+      }
+
+      if (parameterTransport === "http") {
+        try {
+          await updatePipelineParameters(filteredParams);
+          console.log("Sent parameter update via HTTP:", filteredParams);
+        } catch (error) {
+          console.error("Failed to send parameter update via HTTP:", error);
+        }
+        return;
+      }
+
       if (
         dataChannelRef.current &&
         dataChannelRef.current.readyState === "open"
       ) {
         try {
-          // Filter out undefined/null parameters
-          const filteredParams: Record<string, unknown> = {};
-          for (const [key, value] of Object.entries(params)) {
-            if (value !== undefined && value !== null) {
-              filteredParams[key] = value;
-            }
-          }
-
           const message = JSON.stringify(filteredParams);
           dataChannelRef.current.send(message);
-          console.log("Sent parameter update:", filteredParams);
+          console.log("Sent parameter update via WebRTC:", filteredParams);
         } catch (error) {
-          console.error("Failed to send parameter update:", error);
+          console.error("Failed to send parameter update via WebRTC:", error);
         }
       } else {
         console.warn("Data channel not available for parameter update");
       }
     },
-    []
+    [parameterTransport]
   );
 
   const stopStream = useCallback(() => {

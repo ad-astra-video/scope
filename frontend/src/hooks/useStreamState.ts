@@ -32,6 +32,7 @@ export function useStreamState() {
     manageCache: true, // Default manage cache for StreamDiffusionV2
     quantization: null,
     paused: false, // Default to not paused (generating)
+    parameterTransport: "webrtc",
   });
 
   const [promptData, setPromptData] = useState<PromptData>({

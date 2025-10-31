@@ -135,6 +135,72 @@ class WebRTCManager:
         self.rtc_config = create_rtc_config()
         self.is_first_track = True
 
+    def _apply_parameter_update_to_session(
+        self, session: Session, parameters: dict[str, Any]
+    ) -> bool:
+        """Apply parameter updates to a specific session."""
+
+        if not session.video_track:
+            logger.warning(
+                "Session %s has no video track to receive parameter updates",
+                session.id,
+            )
+            return False
+
+        updated = False
+
+        try:
+            if "paused" in parameters and session.video_track:
+                session.video_track.pause(parameters["paused"])
+                updated = True
+
+            frame_processor = getattr(session.video_track, "frame_processor", None)
+
+            if frame_processor:
+                frame_processor.update_parameters(parameters)
+                updated = True
+            else:
+                logger.warning(
+                    "No frame processor available for parameter update on session %s",
+                    session.id,
+                )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error(
+                "Failed to apply parameter update on session %s: %s",
+                session.id,
+                exc,
+            )
+
+        return updated
+
+    def apply_parameter_update(
+        self, parameters: dict[str, Any], session_id: str | None = None
+    ) -> bool:
+        """Apply parameter updates to one or all active sessions."""
+
+        if not parameters:
+            return False
+
+        if session_id is not None:
+            session = self.sessions.get(session_id)
+            if not session:
+                logger.warning(
+                    "Requested parameter update for unknown session %s", session_id
+                )
+                return False
+
+            return self._apply_parameter_update_to_session(session, parameters)
+
+        updated_any = False
+        for session in self.sessions.values():
+            if self._apply_parameter_update_to_session(session, parameters):
+                updated_any = True
+
+        if not updated_any:
+            logger.warning("No active sessions were available for parameter update")
+
+        return updated_any
+
     async def handle_offer(
         self, request: WebRTCOfferRequest, pipeline_manager: PipelineManager
     ) -> dict[str, Any]:
@@ -227,18 +293,10 @@ class WebRTCManager:
                         data = json.loads(message)
                         logger.info(f"Received parameter update: {data}")
 
-                        # Check for paused parameter and call pause() method on video track
-                        if "paused" in data and session.video_track:
-                            session.video_track.pause(data["paused"])
-
-                        # Send parameters to the frame processor
-                        if session.video_track and hasattr(
-                            session.video_track, "frame_processor"
-                        ):
-                            session.video_track.frame_processor.update_parameters(data)
-                        else:
+                        if not self.apply_parameter_update(data, session.id):
                             logger.warning(
-                                "No frame processor available for parameter update"
+                                "Parameter update could not be applied for session %s",
+                                session.id,
                             )
 
                     except json.JSONDecodeError as e:

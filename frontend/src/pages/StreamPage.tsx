@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Header } from "../components/Header";
 import { InputAndControlsPanel } from "../components/InputAndControlsPanel";
 import { VideoOutput } from "../components/VideoOutput";
@@ -79,6 +79,8 @@ export function StreamPage() {
   } = usePipeline();
 
   // WebRTC for streaming
+  const parameterTransport = settings.parameterTransport ?? "webrtc";
+
   const {
     remoteStream,
     isStreaming,
@@ -88,7 +90,12 @@ export function StreamPage() {
     stopStream,
     updateVideoTrack,
     sendParameterUpdate,
-  } = useWebRTC();
+  } = useWebRTC(
+    useMemo(
+      () => ({ parameterTransport }),
+      [parameterTransport]
+    )
+  );
 
   // Get WebRTC stats for FPS
   const webrtcStats = useWebRTCStats({
@@ -719,6 +726,10 @@ export function StreamPage() {
             className="h-full"
             pipelineId={settings.pipelineId}
             onPipelineIdChange={handlePipelineIdChange}
+            parameterTransport={parameterTransport}
+            onParameterTransportChange={transport =>
+              updateSettings({ parameterTransport: transport })
+            }
             isStreaming={isStreaming}
             isDownloading={isDownloading}
             resolution={

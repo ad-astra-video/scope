@@ -28,6 +28,7 @@ from lib.schema import (
     HealthResponse,
     PipelineLoadRequest,
     PipelineStatusResponse,
+    PipelineUpdateRequest,
     WebRTCOfferRequest,
     WebRTCOfferResponse,
 )
@@ -257,6 +258,48 @@ async def load_pipeline(
             )
     except Exception as e:
         logger.error(f"Error loading pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/v1/pipeline/update")
+async def update_pipeline_parameters(
+    request: PipelineUpdateRequest,
+    pipeline_manager: PipelineManager = Depends(get_pipeline_manager),
+    webrtc_manager: WebRTCManager = Depends(get_webrtc_manager),
+):
+    """Update pipeline parameters via HTTP, mirroring WebRTC data channel behavior."""
+
+    try:
+        if not pipeline_manager.is_loaded():
+            raise HTTPException(
+                status_code=400,
+                detail="Pipeline not loaded. Please load pipeline first.",
+            )
+
+        if webrtc_manager is None:
+            raise HTTPException(
+                status_code=503,
+                detail="WebRTC manager not initialized.",
+            )
+
+        parameters = request.model_dump(exclude_none=True, exclude_unset=True)
+
+        if not parameters:
+            return {"message": "No parameter updates provided"}
+
+        updated = webrtc_manager.apply_parameter_update(parameters)
+
+        if not updated:
+            raise HTTPException(
+                status_code=400,
+                detail="No active WebRTC sessions available to receive parameter updates.",
+            )
+
+        return {"message": "Pipeline parameters updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating pipeline parameters: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
