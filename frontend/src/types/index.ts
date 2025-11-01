@@ -36,7 +36,7 @@ export interface SettingsState {
   manageCache?: boolean;
   quantization?: "fp8_e4m3fn" | null;
   paused?: boolean;
-  parameterTransport?: "webrtc" | "http";
+  parameterTransport?: "webrtc" | "livepeer";
 }
 
 export type PipelineCategory = "video-input" | "no-video-input";

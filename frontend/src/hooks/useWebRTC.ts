@@ -3,6 +3,8 @@ import {
   sendWebRTCOffer,
   type PipelineParameterUpdate,
   updatePipelineParameters,
+  startLivepeerStream,
+  setLivepeerStreamId,
 } from "../lib/api";
 import { toast } from "sonner";
 
@@ -12,7 +14,7 @@ interface UseWebRTCOptions {
   /** Callback function called when the stream stops on the backend */
   onStreamStop?: () => void;
   /** Delivery mechanism for parameter updates */
-  parameterTransport?: "webrtc" | "http";
+  parameterTransport?: "webrtc" | "livepeer";
 }
 
 /**
@@ -34,6 +36,7 @@ export function useWebRTC(options?: UseWebRTCOptions) {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const currentStreamRef = useRef<MediaStream | null>(null);
+  const livepeerStreamIdRef = useRef<string | null>(null);
 
   const startStream = useCallback(
     async (initialParameters?: InitialParameters, stream?: MediaStream) => {
@@ -42,6 +45,11 @@ export function useWebRTC(options?: UseWebRTCOptions) {
       setIsConnecting(true);
 
       try {
+        if (parameterTransport !== "livepeer") {
+          livepeerStreamIdRef.current = null;
+          setLivepeerStreamId(null);
+        }
+
         currentStreamRef.current = stream || null;
 
         // Create peer connection
@@ -52,55 +60,81 @@ export function useWebRTC(options?: UseWebRTCOptions) {
         const pc = new RTCPeerConnection(config);
         peerConnectionRef.current = pc;
 
-        // Create data channel for parameter updates
-        const dataChannel = pc.createDataChannel("parameters", {
-          ordered: true,
-        });
-        dataChannelRef.current = dataChannel;
+        const isLivepeerTransport = parameterTransport === "livepeer";
+        let whepUrl: string | null = null;
 
-        dataChannel.onopen = () => {
-          console.log("Data channel opened");
-        };
+        if (!isLivepeerTransport) {
+          // Create data channel for parameter updates
+          const dataChannel = pc.createDataChannel("parameters", {
+            ordered: true,
+          });
+          dataChannelRef.current = dataChannel;
 
-        dataChannel.onmessage = event => {
-          console.log("Data channel message received:", event.data);
+          dataChannel.onopen = () => {
+            console.log("Data channel opened");
+          };
+
+          dataChannel.onmessage = event => {
+            console.log("Data channel message received:", event.data);
+
+            try {
+              const data = JSON.parse(event.data);
+
+              // Handle stream stop notification from backend
+              if (data.type === "stream_stopped") {
+                console.log("Stream stopped by backend, updating UI");
+                setIsStreaming(false);
+                setIsConnecting(false);
+                setRemoteStream(null);
+
+                // Show error toast if there's an error message
+                if (data.error_message) {
+                  toast.error("Stream Error", {
+                    description: data.error_message,
+                    duration: 5000,
+                  });
+                }
+
+                // Close the peer connection to clean up
+                if (peerConnectionRef.current) {
+                  peerConnectionRef.current.close();
+                  peerConnectionRef.current = null;
+                }
+                livepeerStreamIdRef.current = null;
+                setLivepeerStreamId(null);
+                // Notify parent component
+                if (onStreamStop) {
+                  onStreamStop();
+                }
+              }
+            } catch (error) {
+              console.error("Failed to parse data channel message:", error);
+            }
+          };
+
+          dataChannel.onerror = error => {
+            console.error("Data channel error:", error);
+          };
+        } else {
+          dataChannelRef.current = null;
 
           try {
-            const data = JSON.parse(event.data);
+            const response = await startLivepeerStream({
+              initialParameters,
+            });
 
-            // Handle stream stop notification from backend
-            if (data.type === "stream_stopped") {
-              console.log("Stream stopped by backend, updating UI");
-              setIsStreaming(false);
-              setIsConnecting(false);
-              setRemoteStream(null);
+            whepUrl = response.whep_url;
+            livepeerStreamIdRef.current = response.stream_id;
+            setLivepeerStreamId(response.stream_id);
 
-              // Show error toast if there's an error message
-              if (data.error_message) {
-                toast.error("Stream Error", {
-                  description: data.error_message,
-                  duration: 5000,
-                });
-              }
-
-              // Close the peer connection to clean up
-              if (peerConnectionRef.current) {
-                peerConnectionRef.current.close();
-                peerConnectionRef.current = null;
-              }
-              // Notify parent component
-              if (onStreamStop) {
-                onStreamStop();
-              }
-            }
+            console.log("Received Livepeer WHEP URL and stream ID:", whepUrl);
           } catch (error) {
-            console.error("Failed to parse data channel message:", error);
+            console.error("Failed to start Livepeer stream:", error);
+            livepeerStreamIdRef.current = null;
+            setLivepeerStreamId(null);
+            throw error;
           }
-        };
-
-        dataChannel.onerror = error => {
-          console.error("Data channel error:", error);
-        };
+        }
 
         // Add video track for sending to server only if stream is provided
         if (stream) {
@@ -135,10 +169,15 @@ export function useWebRTC(options?: UseWebRTCOptions) {
             setIsStreaming(true);
           } else if (
             pc.connectionState === "disconnected" ||
-            pc.connectionState === "failed"
+            pc.connectionState === "failed" ||
+            pc.connectionState === "closed"
           ) {
             setIsConnecting(false);
             setIsStreaming(false);
+            if (isLivepeerTransport) {
+              livepeerStreamIdRef.current = null;
+              setLivepeerStreamId(null);
+            }
           }
         };
 
@@ -155,14 +194,62 @@ export function useWebRTC(options?: UseWebRTCOptions) {
             // ICE gathering complete - now send the offer
             console.log("ICE gathering complete, sending offer to server");
             try {
-              const answer = await sendWebRTCOffer({
-                sdp: pc.localDescription!.sdp,
-                type: pc.localDescription!.type,
-                initialParameters,
-              });
+              if (isLivepeerTransport) {
+                if (!whepUrl) {
+                  throw new Error("Missing WHEP URL for Livepeer transport");
+                }
 
-              console.log("Received server answer:", answer);
-              await pc.setRemoteDescription(answer);
+                const localDescription = pc.localDescription;
+                if (!localDescription?.sdp) {
+                  throw new Error(
+                    "Local description missing during WHEP negotiation"
+                  );
+                }
+
+                const whepResponse = await fetch(whepUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/sdp" },
+                  body: localDescription.sdp,
+                });
+
+                if (!whepResponse.ok) {
+                  const errorText = await whepResponse.text();
+                  throw new Error(
+                    `WHEP negotiation failed: ${whepResponse.status} ${whepResponse.statusText}: ${errorText}`
+                  );
+                }
+
+                const contentType = whepResponse.headers.get("content-type") || "";
+                let answerSdp: string | undefined;
+
+                if (contentType.includes("application/json")) {
+                  const json = await whepResponse.json();
+                  answerSdp = json.sdp || json.answer || json.data;
+                } else {
+                  answerSdp = await whepResponse.text();
+                }
+
+                if (!answerSdp) {
+                  throw new Error("WHEP negotiation response missing SDP answer");
+                }
+
+                const answer: RTCSessionDescriptionInit = {
+                  type: "answer",
+                  sdp: answerSdp,
+                };
+
+                console.log("Received Livepeer WHEP answer");
+                await pc.setRemoteDescription(answer);
+              } else {
+                const answer = await sendWebRTCOffer({
+                  sdp: pc.localDescription!.sdp,
+                  type: pc.localDescription!.type,
+                  initialParameters,
+                });
+
+                console.log("Received server answer:", answer);
+                await pc.setRemoteDescription(answer);
+              }
             } catch (error) {
               console.error("Error in offer/answer exchange:", error);
               setIsConnecting(false);
@@ -181,10 +268,17 @@ export function useWebRTC(options?: UseWebRTCOptions) {
         await pc.setLocalDescription(offer);
       } catch (error) {
         console.error("Failed to start stream:", error);
+        if (peerConnectionRef.current) {
+          peerConnectionRef.current.close();
+          peerConnectionRef.current = null;
+        }
+        livepeerStreamIdRef.current = null;
+        setLivepeerStreamId(null);
         setIsConnecting(false);
+        setIsStreaming(false);
       }
     },
-    [isConnecting, onStreamStop]
+    [isConnecting, onStreamStop, parameterTransport]
   );
 
   const updateVideoTrack = useCallback(
@@ -235,12 +329,17 @@ export function useWebRTC(options?: UseWebRTCOptions) {
         return;
       }
 
-      if (parameterTransport === "http") {
+      if (parameterTransport === "livepeer") {
+        if (!livepeerStreamIdRef.current) {
+          console.warn("Livepeer stream ID unavailable for parameter update");
+          return;
+        }
+
         try {
           await updatePipelineParameters(filteredParams);
-          console.log("Sent parameter update via HTTP:", filteredParams);
+          console.log("Sent parameter update via Livepeer relay:", filteredParams);
         } catch (error) {
-          console.error("Failed to send parameter update via HTTP:", error);
+          console.error("Failed to send parameter update via Livepeer relay:", error);
         }
         return;
       }
@@ -275,6 +374,8 @@ export function useWebRTC(options?: UseWebRTCOptions) {
 
     // Clear current stream reference (but don't stop it - that's handled by useLocalVideo)
     currentStreamRef.current = null;
+    livepeerStreamIdRef.current = null;
+  setLivepeerStreamId(null);
 
     setRemoteStream(null);
     setConnectionState("new");

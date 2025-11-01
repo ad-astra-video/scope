@@ -32,8 +32,8 @@ interface SettingsPanelProps {
   className?: string;
   pipelineId: PipelineId;
   onPipelineIdChange?: (pipelineId: PipelineId) => void;
-  parameterTransport?: "webrtc" | "http";
-  onParameterTransportChange?: (transport: "webrtc" | "http") => void;
+  parameterTransport?: "webrtc" | "livepeer";
+  onParameterTransportChange?: (transport: "webrtc" | "livepeer") => void;
   isStreaming?: boolean;
   isDownloading?: boolean;
   resolution?: {
@@ -102,7 +102,7 @@ export function SettingsPanel({
   };
 
   const handleParameterTransportChange = (value: string) => {
-    if (value === "webrtc" || value === "http") {
+    if (value === "webrtc" || value === "livepeer") {
       onParameterTransportChange?.(value);
     }
   };
@@ -236,7 +236,7 @@ export function SettingsPanel({
         </div>
 
         <div className="space-y-2">
-          <h3 className="text-sm font-medium">Parameter Updates</h3>
+          <h3 className="text-sm font-medium">Parameter Transport</h3>
           <Select
             value={parameterTransport}
             onValueChange={handleParameterTransportChange}
@@ -247,7 +247,7 @@ export function SettingsPanel({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="webrtc">WebRTC Data Channel</SelectItem>
-              <SelectItem value="http">HTTP API</SelectItem>
+              <SelectItem value="livepeer">Livepeer Mode</SelectItem>
             </SelectContent>
           </Select>
         </div>
